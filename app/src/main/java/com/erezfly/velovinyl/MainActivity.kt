@@ -104,13 +104,11 @@ class MainActivity : Activity() {
           (function(){
             if(document.getElementById('vv-native-wa')) return;
             const s=document.createElement('style');
-            s.textContent='#vv-native-wa{direction:rtl;background:#fff;border:1px solid #dfe8e1;border-radius:18px;padding:14px;margin:12px 16px;color:#183126;font:600 15px system-ui;box-shadow:0 4px 16px #173b2415;position:relative;z-index:999}#vv-native-wa button{border:0;border-radius:12px;padding:12px;background:#16834c;color:white;font-weight:700;margin:8px 4px 0 0}#vv-native-wa .vv-muted{font-size:13px;color:#728279;font-weight:400;margin-top:6px}#vv-native-wa .vv-item{padding:8px;border-top:1px solid #e7f4eb;font-weight:400;font-size:13px}';
+            s.textContent='#vv-native-wa{direction:rtl;background:#fff;border:1px solid #dfe8e1;border-radius:14px;padding:9px 12px;margin:8px 12px;color:#183126;font:600 14px system-ui;box-shadow:0 2px 8px #173b2410;position:relative;z-index:1}#vv-native-wa .vv-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}#vv-native-wa button{border:0;border-radius:9px;padding:7px 10px;background:#16834c;color:white;font-weight:700}#vv-native-wa .vv-close{background:#eef2ef;color:#53645a;margin-right:auto}#vv-native-wa .vv-muted{font-size:12px;color:#728279;font-weight:400;margin-top:6px}#vv-native-wa .vv-item{padding:8px;border-top:1px solid #e7f4eb;font-weight:400;font-size:13px}#vv-native-wa .vv-details{display:none;margin-top:8px}';
             document.head.appendChild(s);
             const p=document.createElement('section');p.id='vv-native-wa';
-            p.innerHTML='<div>💬 הודעות WhatsApp <span id="vv-wa-state" style="float:left">בודק הרשאה…</span></div><div class="vv-muted">הודעות יוצגו כאן לאחר אישור גישה להתראות Android.</div><button id="vv-wa-enable">הפעלת הרשאה</button><button id="vv-wa-refresh" style="background:#e7f4eb;color:#16834c">רענון הודעות</button><div id="vv-wa-list"></div>';
-            const found=[...document.querySelectorAll('body *')].find(e=>e.children.length===0&&(e.textContent||'').includes('הודעות WhatsApp נכנסות'));
-            if(found){let n=found;for(let i=0;i<5&&n.parentElement;i++)n=n.parentElement;n.style.display='none';n.insertAdjacentElement('afterend',p)}
-            else document.body.insertBefore(p,document.body.firstChild);
+            p.innerHTML='<div class="vv-head"><span>💬 הודעות WhatsApp</span><span id="vv-wa-state" style="font-size:12px;font-weight:500">בודק הרשאה…</span><button id="vv-wa-toggle">הצג הודעות</button><button id="vv-wa-close" class="vv-close" aria-label="הסתר">✕</button></div><div id="vv-wa-details" class="vv-details"><div class="vv-muted">הודעות חדשות שיופיעו בהתראות WhatsApp יוצגו כאן.</div><button id="vv-wa-enable">הפעלת הרשאה</button><button id="vv-wa-refresh" style="background:#e7f4eb;color:#16834c">רענון</button><div id="vv-wa-list"></div></div>';
+            document.body.insertBefore(p,document.body.firstChild);
             const esc=x=>String(x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
             function refresh(){
               try{
@@ -123,11 +121,18 @@ class MainActivity : Activity() {
                 document.getElementById('vv-wa-list').innerHTML=a.slice().reverse().slice(0,8).map(x=>'<div class="vv-item"><b>'+esc(x.title)+'</b><br>'+esc(x.text)+'</div>').join('')||'<div class="vv-muted">עדיין אין התראות WhatsApp חדשות.</div>';
               }catch(e){}
             }
+            const details=document.getElementById('vv-wa-details');
+            document.getElementById('vv-wa-toggle').onclick=()=>{
+              const open=details.style.display==='block';
+              details.style.display=open?'none':'block';
+              document.getElementById('vv-wa-toggle').textContent=open?'הצג הודעות':'הסתר הודעות';
+              if(!open) refresh();
+            };
             document.getElementById('vv-wa-enable').onclick=()=>VeloVinylNative.openSettings();
             document.getElementById('vv-wa-refresh').onclick=refresh;
+            document.getElementById('vv-wa-close').onclick=()=>p.remove();
+            window.addEventListener('focus',()=>{if(details.style.display==='block')refresh()});
             refresh();
-            window.addEventListener('focus',refresh);
-            setInterval(refresh,5000);
           })();
         """.trimIndent()
         web.evaluateJavascript(js, null)
