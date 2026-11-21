@@ -1,197 +1,104 @@
 package com.erezfly.velovinyl
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
-import android.provider.Settings
-import android.view.ViewGroup
-import android.webkit.JavascriptInterface
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
-import android.webkit.GeolocationPermissions
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.FrameLayout
+import android.view.Gravity
+import android.view.View
+import android.view.animation.LinearInterpolator
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
+import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : Activity() {
-    private lateinit var web: WebView
-    private var uploadCallback: ValueCallback<Array<Uri>>? = null
-    private val uploadRequestCode = 3101
-    private val locationRequestCode = 3102
-    private var pendingGeoOrigin: String? = null
-    private var pendingGeoCallback: GeolocationPermissions.Callback? = null
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.rgb(16, 37, 29)
-        window.navigationBarColor = Color.rgb(16, 37, 29)
-
-        web = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            settings.setGeolocationEnabled(true)
-            settings.allowFileAccess = false
-            settings.allowContentAccess = true
-            addJavascriptInterface(Bridge(), "VeloVinylNative")
-            webChromeClient = object : WebChromeClient() {
-                override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
-                    val requestOrigin = origin ?: ""
-                    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                        callback?.invoke(requestOrigin, true, false)
-                    } else {
-                        pendingGeoOrigin = requestOrigin
-                        pendingGeoCallback = callback
-                        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), locationRequestCode)
-                    }
-                }
-
-                override fun onShowFileChooser(
-                    view: WebView?,
-                    filePathCallback: ValueCallback<Array<Uri>>?,
-                    fileChooserParams: FileChooserParams?
-                ): Boolean {
-                    uploadCallback?.onReceiveValue(null)
-                    uploadCallback = filePathCallback
-                    return try {
-                        val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                            addCategory(Intent.CATEGORY_OPENABLE)
-                            type = "audio/*"
-                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-                        }
-                        startActivityForResult(Intent.createChooser(pick, "בחירת שירים"), uploadRequestCode)
-                        true
-                    } catch (_: Exception) {
-                        uploadCallback?.onReceiveValue(null)
-                        uploadCallback = null
-                        false
-                    }
-                }
-            }
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    installNotificationPanel()
-                }
-
-                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                    val uri = request?.url ?: return false
-                    if (uri.scheme == "https" && uri.host == "velovinyl.vercel.app") return false
-                    return try {
-                        startActivity(Intent(Intent.ACTION_VIEW, uri))
-                        true
-                    } catch (_: Exception) {
-                        true
-                    }
-                }
-            }
-        }
-
-        setContentView(FrameLayout(this).apply {
-            addView(web, FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ))
+    private val bg=Color.rgb(12,19,16); private val panel=Color.rgb(25,36,30)
+    private val green=Color.rgb(74,205,130); private val muted=Color.rgb(161,177,166)
+    private data class Track(val name:String,val uri:String)
+    private val tracks=mutableListOf<Track>(); private var current=-1
+    private var player:MediaPlayer?=null; private var spin:ObjectAnimator?=null
+    private lateinit var vinyl:TextView; private lateinit var titleView:TextView
+    private lateinit var statusView:TextView; private lateinit var playButton:Button
+    private lateinit var trackList:LinearLayout
+    private val pickCode=701
+    override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); window.statusBarColor=bg; window.navigationBarColor=bg; loadTracks(); buildUi() }
+    private fun dp(v:Int)=(v*resources.displayMetrics.density).toInt()
+    private fun label(s:String,size:Float,color:Int,bold:Boolean=false,gravity:Int=Gravity.START)=TextView(this).apply { text=s; textSize=size; setTextColor(color); this.gravity=gravity; if(bold) typeface=Typeface.DEFAULT_BOLD; setPadding(dp(4),dp(5),dp(4),dp(5)) }
+    private fun card()=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(16),dp(14),dp(16),dp(14)); setBackgroundColor(panel) }
+    private fun button(s:String,action:()->Unit)=Button(this).apply { text=s; textSize=14f; isAllCaps=false; setTextColor(Color.rgb(8,27,17)); backgroundTintList=android.content.res.ColorStateList.valueOf(green); setOnClickListener { action() }; layoutParams=LinearLayout.LayoutParams(-2,dp(48)).apply { setMargins(dp(4),dp(8),dp(4),dp(4)) } }
+    private fun buildUi() {
+        val scroll=ScrollView(this)
+        val content=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(20),dp(18),dp(20),dp(28)); setBackgroundColor(bg) }
+        content.addView(label("VELOVINYL  ♫",13f,green,true,Gravity.CENTER))
+        content.addView(label("המוזיקה שלך. הדרך שלך.",25f,Color.WHITE,true,Gravity.CENTER))
+        content.addView(label("נגן מוזיקה עצמאי",14f,muted,false,Gravity.CENTER))
+        val pc=card(); vinyl=label("◉",138f,Color.rgb(220,224,217),false,Gravity.CENTER).apply { includeFontPadding=false }
+        pc.addView(vinyl,LinearLayout.LayoutParams(-1,dp(190)))
+        titleView=label("לא נבחר שיר",18f,Color.WHITE,true,Gravity.CENTER); pc.addView(titleView)
+        statusView=label("מוכן לנגן",13f,muted,false,Gravity.CENTER); pc.addView(statusView)
+        val controls=LinearLayout(this).apply { gravity=Gravity.CENTER }
+        controls.addView(button("⏮"){ previous() }); playButton=button("▶ נגן"){ togglePlay() }; controls.addView(playButton); controls.addView(button("⏭"){ next() }); pc.addView(controls); content.addView(pc)
+        content.addView(label("ספריית המוזיקה",19f,Color.WHITE,true).apply { setPadding(0,dp(22),0,dp(8)) })
+        content.addView(button("＋ הוספת שירים מהמכשיר"){ pickTracks() })
+        trackList=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }; content.addView(trackList); renderTracks()
+        content.addView(label("ניווט",19f,Color.WHITE,true).apply { setPadding(0,dp(22),0,dp(8)) })
+        val nav=card(); nav.addView(label("הקלד יעד ופתח ניווט קולי",15f,Color.WHITE,true))
+        val destination=EditText(this).apply { hint="לאן נוסעים?"; textSize=16f; setTextColor(Color.WHITE); setHintTextColor(muted); setSingleLine(true); setPadding(dp(12),dp(12),dp(12),dp(12)); setBackgroundColor(Color.rgb(38,51,43)) }
+        nav.addView(destination,LinearLayout.LayoutParams(-1,dp(52)))
+        nav.addView(button("נווט עם Google Maps  ↗") {
+            val q=destination.text.toString().trim()
+            if(q.isEmpty()) { toast("יש להזין יעד"); return@button }
+            val uri=Uri.parse("google.navigation:q="+Uri.encode(q)+"&mode=d")
+            try { startActivity(Intent(Intent.ACTION_VIEW,uri).setPackage("com.google.android.apps.maps")) }
+            catch(e:Exception) { startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://www.google.com/maps/dir/?api=1&destination="+Uri.encode(q)))) }
         })
-        web.loadUrl("https://velovinyl.vercel.app/")
+        nav.addView(label("ההנחיות הקוליות יושמעו ב-Google Maps.",12f,muted)); content.addView(nav)
+        content.addView(label("VeloVinyl • אפליקציית Android",11f,muted,false,Gravity.CENTER).apply { setPadding(0,dp(22),0,0) })
+        scroll.addView(content); setContentView(scroll)
     }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == locationRequestCode) {
-            val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
-            pendingGeoCallback?.invoke(pendingGeoOrigin ?: "", granted, false)
-            pendingGeoCallback = null
-            pendingGeoOrigin = null
+    private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_SHORT).show()
+    private fun pickTracks() { val i=Intent(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); type="audio/*"; putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true) }; startActivityForResult(i,pickCode) }
+    @Deprecated("Document picker callback")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data); if(requestCode!=pickCode || resultCode!=RESULT_OK || data==null) return
+        val uris=mutableListOf<Uri>(); data.clipData?.let { c -> for(i in 0 until c.itemCount) uris.add(c.getItemAt(i).uri) }; if(uris.isEmpty()) data.data?.let { uris.add(it) }
+        uris.forEach { u -> try {
+            contentResolver.takePersistableUriPermission(u,Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val n=contentResolver.query(u,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),null,null,null)?.use { if(it.moveToFirst()) it.getString(0) else "שיר" } ?: "שיר"
+            if(tracks.none { t -> t.uri==u.toString() }) tracks.add(Track(n,u.toString()))
+        } catch(e:Exception) {} }
+        saveTracks(); renderTracks(); if(current<0 && tracks.isNotEmpty()) selectTrack(0)
+    }
+    private fun renderTracks() {
+        if(!::trackList.isInitialized) return; trackList.removeAllViews()
+        if(tracks.isEmpty()) { trackList.addView(label("עדיין אין שירים. הוסף שירים מהמכשיר.",13f,muted)); return }
+        tracks.forEachIndexed { i,t ->
+            val row=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL; setPadding(dp(8),dp(4),dp(4),dp(4)); setBackgroundColor(panel) }
+            row.addView(TextView(this).apply { text=(i+1).toString()+".  "+t.name; textSize=14f; setTextColor(Color.WHITE); maxLines=1; ellipsize=android.text.TextUtils.TruncateAt.END },LinearLayout.LayoutParams(0,dp(48),1f))
+            row.addView(button("▶"){ selectTrack(i); startTrack() }); trackList.addView(row)
         }
     }
-
-    @Deprecated("Deprecated by Android; retained for WebView file input compatibility")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != uploadRequestCode) return
-        val callback = uploadCallback ?: return
-        val results = if (resultCode == RESULT_OK && data != null) {
-            val clip = data.clipData
-            when {
-                clip != null -> Array(clip.itemCount) { index -> clip.getItemAt(index).uri }
-                data.data != null -> arrayOf(data.data!!)
-                else -> null
-            }
-        } else null
-        callback.onReceiveValue(results)
-        uploadCallback = null
+    private fun selectTrack(i:Int) { if(i !in tracks.indices) return; current=i; titleView.text=tracks[i].name; statusView.text="נבחר" }
+    private fun startTrack() {
+        if(current !in tracks.indices) { toast("בחר שיר מהרשימה"); return }
+        try { player?.release(); player=MediaPlayer().apply { setDataSource(this@MainActivity,Uri.parse(tracks[current].uri)); setOnCompletionListener { next() }; prepare(); start() }; playButton.text="Ⅱ השהה"; statusView.text="מתנגן עכשיו"; startSpin() }
+        catch(e:Exception) { toast("לא ניתן לנגן את הקובץ הזה"); stopSpin() }
     }
-
-    private fun installNotificationPanel() {
-        val js = """
-          (function(){
-            if(document.getElementById('vv-native-wa')) return;
-            const s=document.createElement('style');
-            s.textContent='#vv-native-wa{direction:rtl;background:#fff;border:1px solid #dfe8e1;border-radius:14px;padding:9px 12px;margin:8px 12px;color:#183126;font:600 14px system-ui;box-shadow:0 2px 8px #173b2410;position:relative;z-index:1}#vv-native-wa .vv-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}#vv-native-wa button{border:0;border-radius:9px;padding:7px 10px;background:#16834c;color:white;font-weight:700}#vv-native-wa .vv-close{background:#eef2ef;color:#53645a;margin-right:auto}#vv-native-wa .vv-muted{font-size:12px;color:#728279;font-weight:400;margin-top:6px}#vv-native-wa .vv-item{padding:8px;border-top:1px solid #e7f4eb;font-weight:400;font-size:13px}#vv-native-wa .vv-details{display:none;margin-top:8px}';
-            document.head.appendChild(s);
-            const p=document.createElement('section');p.id='vv-native-wa';
-            p.innerHTML='<div class="vv-head"><span>💬 הודעות WhatsApp</span><span id="vv-wa-state" style="font-size:12px;font-weight:500">בודק הרשאה…</span><button id="vv-wa-toggle">הצג הודעות</button><button id="vv-wa-close" class="vv-close" aria-label="הסתר">✕</button></div><div id="vv-wa-details" class="vv-details"><div class="vv-muted">הודעות חדשות שיופיעו בהתראות WhatsApp יוצגו כאן.</div><button id="vv-wa-enable">הפעלת הרשאה</button><button id="vv-wa-refresh" style="background:#e7f4eb;color:#16834c">רענון</button><div id="vv-wa-list"></div></div>';
-            document.body.insertBefore(p,document.body.firstChild);
-            const esc=x=>String(x||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-            function refresh(){
-              try{
-                const on=VeloVinylNative.isEnabled();
-                const st=document.getElementById('vv-wa-state');
-                st.textContent=on?'ההרשאה פעילה':'נדרשת הרשאה';
-                st.style.color=on?'#16834c':'#c18b2b';
-                document.getElementById('vv-wa-enable').style.display=on?'none':'inline-block';
-                const a=JSON.parse(VeloVinylNative.getNotifications());
-                document.getElementById('vv-wa-list').innerHTML=a.slice().reverse().slice(0,8).map(x=>'<div class="vv-item"><b>'+esc(x.title)+'</b><br>'+esc(x.text)+'</div>').join('')||'<div class="vv-muted">עדיין אין התראות WhatsApp חדשות.</div>';
-              }catch(e){}
-            }
-            const details=document.getElementById('vv-wa-details');
-            document.getElementById('vv-wa-toggle').onclick=()=>{
-              const open=details.style.display==='block';
-              details.style.display=open?'none':'block';
-              document.getElementById('vv-wa-toggle').textContent=open?'הצג הודעות':'הסתר הודעות';
-              if(!open) refresh();
-            };
-            document.getElementById('vv-wa-enable').onclick=()=>VeloVinylNative.openSettings();
-            document.getElementById('vv-wa-refresh').onclick=refresh;
-            document.getElementById('vv-wa-close').onclick=()=>p.remove();
-            window.addEventListener('focus',()=>{if(details.style.display==='block')refresh()});
-            refresh();
-          })();
-        """.trimIndent()
-        web.evaluateJavascript(js, null)
+    private fun togglePlay() {
+        val p=player
+        if(p?.isPlaying==true) { p.pause(); playButton.text="▶ נגן"; statusView.text="מושהה"; stopSpin() }
+        else if(p!=null) { p.start(); playButton.text="Ⅱ השהה"; statusView.text="מתנגן עכשיו"; startSpin() } else startTrack()
     }
-
-    override fun onResume() {
-        super.onResume()
-        if (::web.isInitialized) web.postDelayed({
-            web.evaluateJavascript("window.dispatchEvent(new Event('focus'))", null)
-        }, 300)
-    }
-
-    inner class Bridge {
-        @JavascriptInterface fun isEnabled(): Boolean = NotificationAccess.isEnabled(this@MainActivity)
-        @JavascriptInterface fun getNotifications(): String =
-            getSharedPreferences("wa_notifications", MODE_PRIVATE).getString("items", "[]") ?: "[]"
-        @JavascriptInterface fun openSettings() {
-            runOnUiThread { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        if (::web.isInitialized && web.canGoBack()) web.goBack() else super.onBackPressed()
-    }
-
-    override fun onDestroy() {
-        uploadCallback?.onReceiveValue(null)
-        uploadCallback = null
-        if (::web.isInitialized) web.destroy()
-        super.onDestroy()
-    }
+    private fun next() { if(tracks.isNotEmpty()) { current=(current+1)%tracks.size; selectTrack(current); startTrack() } }
+    private fun previous() { if(tracks.isNotEmpty()) { current=if(current<=0) tracks.lastIndex else current-1; selectTrack(current); startTrack() } }
+    private fun startSpin() { stopSpin(); spin=ObjectAnimator.ofFloat(vinyl,View.ROTATION,0f,360f).apply { duration=2400; repeatCount=ValueAnimator.INFINITE; interpolator=LinearInterpolator(); start() } }
+    private fun stopSpin() { spin?.cancel(); spin=null; if(::vinyl.isInitialized) vinyl.rotation=0f }
+    private fun saveTracks() { val a=JSONArray(); tracks.forEach { a.put(JSONObject().put("name",it.name).put("uri",it.uri)) }; getSharedPreferences("library",MODE_PRIVATE).edit().putString("tracks",a.toString()).apply() }
+    private fun loadTracks() { try { val a=JSONArray(getSharedPreferences("library",MODE_PRIVATE).getString("tracks","[]")); for(i in 0 until a.length()) { val o=a.getJSONObject(i); tracks.add(Track(o.getString("name"),o.getString("uri"))) } } catch(e:Exception) {} }
+    override fun onDestroy() { stopSpin(); player?.release(); player=null; super.onDestroy() }
 }
