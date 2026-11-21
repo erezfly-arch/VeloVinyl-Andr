@@ -47,7 +47,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var plannedPoints= mutableListOf<GeoPoint>(); private var plannedLine:Polyline?=null; private var offRouteWarned=false; private var rideMeters=0.0; private var announcedKm=0; private var rideStartedAt=0L; private var currentSpeed=0f; private var riding=false; private var destinationBox:EditText?=null
  private var locationManager:LocationManager?=null; private var pendingDestination:String?=null; private var routeRequested=false; private val locationListener=LocationListener { loc -> onGps(loc) }
  private val pickCode=701; private val contactCode=702; private val audioPerm=703
- private val waReceiver=object:BroadcastReceiver(){ override fun onReceive(context:Context?,intent:Intent?) { if(::waPage.isInitialized && waPage.visibility==View.VISIBLE) refreshWhatsApp() } }\n override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); ContextCompat.registerReceiver(this,waReceiver,IntentFilter("com.erezfly.velovinyl.WA_UPDATED"),ContextCompat.RECEIVER_NOT_EXPORTED); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
+ private val waReceiver=object:BroadcastReceiver(){ override fun onReceive(context:Context?,intent:Intent?) { if(::waPage.isInitialized && waPage.visibility==View.VISIBLE) refreshWhatsApp() } }
+ override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); ContextCompat.registerReceiver(this,waReceiver,IntentFilter("com.erezfly.velovinyl.WA_UPDATED"),ContextCompat.RECEIVER_NOT_EXPORTED); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
  override fun onInit(status:Int) { if(status==TextToSpeech.SUCCESS) tts?.language=Locale("he","IL") }
  private fun dp(v:Int)= (v*resources.displayMetrics.density).toInt()
  private fun label(s:String,size:Float,color:Int,bold:Boolean=false,center:Boolean=false)=TextView(this).apply { text=s; textSize=size; setTextColor(color); gravity=if(center) Gravity.CENTER else Gravity.START; if(bold) typeface=Typeface.DEFAULT_BOLD; setPadding(dp(4),dp(5),dp(4),dp(5)) }
@@ -78,7 +79,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private fun buildMapPage() {
   val c=LinearLayout(this).apply { orientation=1; setPadding(dp(12),dp(8),dp(12),dp(12)) }
   c.addView(label("מפת הרכיבה",20f,Color.WHITE,true))
-  map=MapView(this); map.setTileSource(TileSourceFactory.MAPNIK); map.setMultiTouchControls(true); map.controller.setZoom(14.0); map.controller.setCenter(GeoPoint(32.015,34.78)); locationOverlay=MyLocationNewOverlay(GpsMyLocationProvider(this),map); map.overlays.add(locationOverlay)
+  map=MapView(this); map.setTileSource(TileSourceFactory.MAPNIK); map.setMultiTouchControls(true); map.controller.setZoom(14.0); map.controller.setCenter(GeoPoint(32.015,34.78)); val myLocation=MyLocationNewOverlay(GpsMyLocationProvider(this),map); locationOverlay=myLocation; map.overlays.add(myLocation)
   c.addView(map,LinearLayout.LayoutParams(-1,dp(300)))
   val nav=card(); nav.addView(label("לאן רוכבים?",17f,Color.WHITE,true))
   destinationBox=EditText(this).apply { hint="הקלד כתובת או יעד"; setTextColor(Color.WHITE); setHintTextColor(muted); textSize=16f; setSingleLine(true); setPadding(dp(12),dp(8),dp(12),dp(8)); setBackgroundColor(Color.rgb(43,55,47)) }
@@ -152,7 +153,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
    val raw=conn.inputStream.bufferedReader().use { it.readText() }; conn.disconnect()
    val coords=JSONObject(raw).getJSONArray("features").getJSONObject(0).getJSONObject("geometry").getJSONArray("coordinates")
    val pts=mutableListOf<GeoPoint>(); for(i in 0 until coords.length()) { val pair=coords.getJSONArray(i); pts.add(GeoPoint(pair.getDouble(1),pair.getDouble(0))) }
-   runOnUiThread { plannedPoints=pts; plannedLine=Polyline().apply { setPoints(pts); outlinePaint.color=green; outlinePaint.strokeWidth=dp(6).toFloat() }; map.overlays.add(plannedLine); map.invalidate(); tts?.speak("המסלול מוכן. אפשר לצאת לדרך.",TextToSpeech.QUEUE_ADD,null,"route") }
+   runOnUiThread { plannedPoints=pts; val line=Polyline().apply { setPoints(pts); outlinePaint.color=green; outlinePaint.strokeWidth=dp(6).toFloat() }; plannedLine=line; map.overlays.add(line); map.invalidate(); tts?.speak("המסלול מוכן. אפשר לצאת לדרך.",TextToSpeech.QUEUE_ADD,null,"route") }
   } catch(_:Exception) { runOnUiThread { toast("לא הצלחתי לחשב מסלול אופניים ליעד הזה") } } }
  }
  private fun onGps(loc:Location) {
@@ -160,7 +161,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
   val p=GeoPoint(loc.latitude,loc.longitude); currentSpeed=loc.speed*3.6f; val prev=lastLocation
   if(prev!=null) { val d=prev.distanceTo(loc); if(d in 1.0..150.0) rideMeters+=d }
   routePoints.add(p); if(routePoints.size>1200) routePoints.removeAt(0)
-  routeLine?.let { map.overlays.remove(it) }; routeLine=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(4).toFloat() }; map.overlays.add(routeLine)
+  routeLine?.let { map.overlays.remove(it) }; val track=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(4).toFloat() }; routeLine=track; map.overlays.add(track)
   lastLocation=loc
   if(!routeRequested && pendingDestination!=null) { routeRequested=true; val dest=pendingDestination!!; thread { try { val g=Geocoder(this,Locale("he","IL")).getFromLocationName(dest,1); if(!g.isNullOrEmpty()) fetchBikeRoute(loc,GeoPoint(g[0].latitude,g[0].longitude)) } catch(_:Exception){} } }
   if(plannedPoints.isNotEmpty()) { var nearest=Double.MAX_VALUE; for(i in plannedPoints.indices step 5) { val pt=plannedPoints[i]; val out=FloatArray(1); Location.distanceBetween(loc.latitude,loc.longitude,pt.latitude,pt.longitude,out); nearest=min(nearest,out[0].toDouble()) }; if(nearest>85 && !offRouteWarned) { offRouteWarned=true; tts?.speak("שים לב, נראה שסטית מהמסלול.",TextToSpeech.QUEUE_ADD,null,"deviation") }; if(nearest<45) offRouteWarned=false }
