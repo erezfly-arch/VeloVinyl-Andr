@@ -3,7 +3,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import org.json.JSONArray
 import org.json.JSONObject
-class WhatsAppNotificationListener : NotificationListenerService() {
+class WhatsAppNotificationListener : NotificationListenerService() {\n override fun onListenerConnected() { super.onListenerConnected(); sendBroadcast(android.content.Intent("com.erezfly.velovinyl.WA_UPDATED").setPackage(packageName)) }
  override fun onNotificationPosted(sbn: StatusBarNotification) {
   if (sbn.packageName != "com.whatsapp" && sbn.packageName != "com.whatsapp.w4b") return
   val e=sbn.notification.extras
@@ -14,6 +14,6 @@ class WhatsAppNotificationListener : NotificationListenerService() {
   val a=JSONArray(p.getString("items","[]"))
   a.put(JSONObject().put("title",title).put("text",body).put("time",sbn.postTime))
   val out=JSONArray(); for(i in maxOf(0,a.length()-100) until a.length()) out.put(a.getJSONObject(i))
-  p.edit().putString("items",out.toString()).apply()
+  p.edit().putString("items",out.toString()).apply(); sendBroadcast(android.content.Intent("com.erezfly.velovinyl.WA_UPDATED").setPackage(packageName))
  }
 }
