@@ -24,7 +24,7 @@ android {
         jvmTarget = '1.8'
     }
 
-    buildTypes {
+    dependencies {\n        implementation 'org.osmdroid:osmdroid-android:6.1.20'\n        implementation 'androidx.core:core-ktx:1.15.0'\n    }\n\n    buildTypes {
         release { minifyEnabled false }
     }
 }
