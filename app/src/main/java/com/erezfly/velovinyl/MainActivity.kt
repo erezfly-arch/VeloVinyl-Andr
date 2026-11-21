@@ -42,10 +42,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private data class Track(val name:String,val uri:String)
  private val tracks=mutableListOf<Track>(); private var current=-1; private var player:MediaPlayer?=null
  private lateinit var bike:BikeView; private lateinit var titleView:TextView; private lateinit var playButton:Button; private lateinit var trackList:LinearLayout
- private lateinit var pages:LinearLayout; private lateinit var mapPage:LinearLayout; private lateinit var homePage:LinearLayout; private lateinit var waPage:LinearLayout
+ private lateinit var pages:LinearLayout; private lateinit var statsText:TextView; private lateinit var mapPage:LinearLayout; private lateinit var homePage:LinearLayout; private lateinit var waPage:LinearLayout
  private lateinit var map:MapView; private var locationOverlay:MyLocationNewOverlay?=null; private var tts:TextToSpeech?=null
  private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var rideMeters=0.0; private var announcedKm=0; private var riding=false; private var destinationBox:EditText?=null
- private var locationManager:LocationManager?=null; private val locationListener=LocationListener { loc -> onGps(loc) }
+ private var locationManager:LocationManager?=null; private var pendingDestination:String?=null; private var routeRequested=false; private val locationListener=LocationListener { loc -> onGps(loc) }
  private val pickCode=701; private val contactCode=702; private val audioPerm=703
  override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
  override fun onInit(status:Int) { if(status==TextToSpeech.SUCCESS) tts?.language=Locale("he","IL") }
@@ -86,7 +86,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
   val actions=LinearLayout(this).apply { gravity=Gravity.CENTER }
   actions.addView(button("התחל ניווט ורכיבה"){ beginNavigation() }); actions.addView(button("עצור"){ stopRide() }); nav.addView(actions)
   c.addView(nav)
-  val stats=card(); stats.addView(label("נתוני רכיבה",16f,Color.WHITE,true)); stats.addView(label("מרחק: 0.00 ק״מ   •   זמן ומיקום מתעדכנים בזמן אמת",13f,muted)); stats.tag="stats"; c.addView(stats)
+  val stats=card(); stats.addView(label("נתוני רכיבה",16f,Color.WHITE,true)); statsText=label("מרחק: 0.00 ק״מ   •   ממתין ל-GPS",13f,muted); stats.addView(statsText); c.addView(stats)
   mapPage.addView(scrollWrap(c),LinearLayout.LayoutParams(-1,-1))
  }
  private fun buildWhatsAppPage() {
@@ -146,7 +146,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  }
  private fun onGps(loc:Location) {
   val p=GeoPoint(loc.latitude,loc.longitude); if(routePoints.isNotEmpty()) { val prev=lastLocation; if(prev!=null) { val d=prev.distanceTo(loc); if(d<150) rideMeters+=d }; routePoints.add(p); if(routePoints.size>1000) routePoints.removeAt(0); routeLine?.let { map.overlays.remove(it) }; routeLine=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(5).toFloat() }; map.overlays.add(routeLine) }
-  lastLocation=loc; if(::map.isInitialized) { map.controller.animateTo(p); map.invalidate() }
+  lastLocation=loc; if(riding && !routeRequested && pendingDestination!=null) { routeRequested=true; val dest=pendingDestination!!; thread { try { val geocoder=Geocoder(this,Locale("he","IL")); val found=geocoder.getFromLocationName(dest,1); if(!found.isNullOrEmpty()) fetchBikeRoute(loc,GeoPoint(found[0].latitude,found[0].longitude)) } catch(_:Exception){} } }; if(::map.isInitialized) { map.controller.animateTo(p); map.invalidate() }
   if(riding) { val km=(rideMeters/1000).toInt(); if(km>announcedKm) { announcedKm=km; tts?.speak("עברתם $km קילומטרים",TextToSpeech.QUEUE_ADD,null,"km$km") }; updateStats() }
  }
  private fun updateStats() {
