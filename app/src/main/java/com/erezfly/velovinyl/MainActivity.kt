@@ -2,6 +2,7 @@ package com.erezfly.velovinyl
 
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -10,6 +11,7 @@ import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.GeolocationPermissions
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -19,6 +21,9 @@ class MainActivity : Activity() {
     private lateinit var web: WebView
     private var uploadCallback: ValueCallback<Array<Uri>>? = null
     private val uploadRequestCode = 3101
+    private val locationRequestCode = 3102
+    private var pendingGeoOrigin: String? = null
+    private var pendingGeoCallback: GeolocationPermissions.Callback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,10 +34,23 @@ class MainActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
+            settings.setGeolocationEnabled(true)
             settings.allowFileAccess = false
             settings.allowContentAccess = true
             addJavascriptInterface(Bridge(), "VeloVinylNative")
             webChromeClient = object : WebChromeClient() {
+                override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                    val requestOrigin = origin ?: ""
+                    if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                        checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                        callback?.invoke(requestOrigin, true, false)
+                    } else {
+                        pendingGeoOrigin = requestOrigin
+                        pendingGeoCallback = callback
+                        requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), locationRequestCode)
+                    }
+                }
+
                 override fun onShowFileChooser(
                     view: WebView?,
                     filePathCallback: ValueCallback<Array<Uri>>?,
@@ -80,6 +98,16 @@ class MainActivity : Activity() {
             ))
         })
         web.loadUrl("https://velovinyl.vercel.app/")
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == locationRequestCode) {
+            val granted = grantResults.any { it == PackageManager.PERMISSION_GRANTED }
+            pendingGeoCallback?.invoke(pendingGeoOrigin ?: "", granted, false)
+            pendingGeoCallback = null
+            pendingGeoOrigin = null
+        }
     }
 
     @Deprecated("Deprecated by Android; retained for WebView file input compatibility")
