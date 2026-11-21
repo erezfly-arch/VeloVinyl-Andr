@@ -44,10 +44,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private lateinit var bike:BikeView; private lateinit var titleView:TextView; private lateinit var playButton:Button; private lateinit var trackList:LinearLayout
  private lateinit var pages:LinearLayout; private lateinit var statsText:TextView; private lateinit var mapPage:LinearLayout; private lateinit var homePage:LinearLayout; private lateinit var waPage:LinearLayout
  private lateinit var map:MapView; private var locationOverlay:MyLocationNewOverlay?=null; private var tts:TextToSpeech?=null
- private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var plannedPoints= mutableListOf<GeoPoint>(); private var plannedLine:Polyline?=null; private var offRouteWarned=false; private var rideMeters=0.0; private var announcedKm=0; private var riding=false; private var destinationBox:EditText?=null
+ private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var plannedPoints= mutableListOf<GeoPoint>(); private var plannedLine:Polyline?=null; private var offRouteWarned=false; private var rideMeters=0.0; private var announcedKm=0; private var rideStartedAt=0L; private var currentSpeed=0f; private var riding=false; private var destinationBox:EditText?=null
  private var locationManager:LocationManager?=null; private var pendingDestination:String?=null; private var routeRequested=false; private val locationListener=LocationListener { loc -> onGps(loc) }
  private val pickCode=701; private val contactCode=702; private val audioPerm=703
- override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
+ private val waReceiver=object:BroadcastReceiver(){ override fun onReceive(context:Context?,intent:Intent?) { if(::waPage.isInitialized && waPage.visibility==View.VISIBLE) refreshWhatsApp() } }\n override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); registerReceiver(waReceiver,IntentFilter("com.erezfly.velovinyl.WA_UPDATED")); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
  override fun onInit(status:Int) { if(status==TextToSpeech.SUCCESS) tts?.language=Locale("he","IL") }
  private fun dp(v:Int)= (v*resources.displayMetrics.density).toInt()
  private fun label(s:String,size:Float,color:Int,bold:Boolean=false,center:Boolean=false)=TextView(this).apply { text=s; textSize=size; setTextColor(color); gravity=if(center) Gravity.CENTER else Gravity.START; if(bold) typeface=Typeface.DEFAULT_BOLD; setPadding(dp(4),dp(5),dp(4),dp(5)) }
@@ -136,7 +136,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private fun beginNavigation() {
   val dest=destinationBox?.text?.toString()?.trim().orEmpty(); if(dest.isBlank()) { toast("הקלד יעד"); return }
   if(ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) { ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),audioPerm); return }
-  riding=true; announcedKm=0; rideMeters=0.0; routePoints.clear(); plannedPoints.clear(); routeLine?.let { map.overlays.remove(it) }; plannedLine?.let { map.overlays.remove(it) }; routeLine=null; plannedLine=null; lastLocation=null; pendingDestination=dest; routeRequested=false; offRouteWarned=false
+  riding=true; rideStartedAt=android.os.SystemClock.elapsedRealtime(); currentSpeed=0f; announcedKm=0; rideMeters=0.0; routePoints.clear(); plannedPoints.clear(); routeLine?.let { map.overlays.remove(it) }; plannedLine?.let { map.overlays.remove(it) }; routeLine=null; plannedLine=null; lastLocation=null; pendingDestination=dest; routeRequested=false; offRouteWarned=false
   try { locationOverlay?.enableMyLocation() } catch(_:SecurityException){}
   val lm=getSystemService(LOCATION_SERVICE) as LocationManager; locationManager=lm
   try { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER,1500L,2f,locationListener) } catch(_:SecurityException){}
@@ -157,7 +157,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  }
  private fun onGps(loc:Location) {
   if(!riding) { lastLocation=loc; return }
-  val p=GeoPoint(loc.latitude,loc.longitude); val prev=lastLocation
+  val p=GeoPoint(loc.latitude,loc.longitude); currentSpeed=loc.speed*3.6f; val prev=lastLocation
   if(prev!=null) { val d=prev.distanceTo(loc); if(d in 1.0..150.0) rideMeters+=d }
   routePoints.add(p); if(routePoints.size>1200) routePoints.removeAt(0)
   routeLine?.let { map.overlays.remove(it) }; routeLine=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(4).toFloat() }; map.overlays.add(routeLine)
@@ -167,7 +167,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
   if(::map.isInitialized) { if(mapPage.visibility==View.VISIBLE) map.controller.animateTo(p); map.invalidate() }
   val km=(rideMeters/1000).toInt(); if(km>announcedKm) { announcedKm=km; tts?.speak("עברתם ${km} קילומטרים",TextToSpeech.QUEUE_ADD,null,"km$km") }; updateStats()
  }
- private fun updateStats() { if(!::statsText.isInitialized) return; statsText.text="מרחק: %.2f ק״מ   •   GPS: %s".format(rideMeters/1000,if(lastLocation!=null) "מחובר" else "ממתין למיקום") }
+ private fun updateStats() { if(!::statsText.isInitialized) return; val sec=if(rideStartedAt>0L) ((android.os.SystemClock.elapsedRealtime()-rideStartedAt)/1000).toInt() else 0; statsText.text="מרחק %.2f ק״מ  •  מהירות %.1f קמ״ש  •  זמן %02d:%02d  •  GPS %s".format(rideMeters/1000,currentSpeed,sec/60,sec%60,if(lastLocation!=null) "מחובר" else "ממתין") }
  private fun stopRide() { riding=false; try { locationManager?.removeUpdates(locationListener) } catch(_:Exception){}; tts?.speak("הרכיבה הסתיימה",TextToSpeech.QUEUE_FLUSH,null,"stop") }
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) { super.onRequestPermissionsResult(requestCode,permissions,grantResults); if(requestCode==audioPerm && grantResults.any { it==PackageManager.PERMISSION_GRANTED }) beginNavigation() else if(requestCode==audioPerm) toast("צריך לאשר מיקום כדי להפעיל GPS") }
  private fun saveTracks() { val a=JSONArray(); tracks.forEach { a.put(JSONObject().put("name",it.name).put("uri",it.uri)) }; getSharedPreferences("library",MODE_PRIVATE).edit().putString("tracks",a.toString()).apply() }
@@ -175,7 +175,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private fun toast(s:String)=Toast.makeText(this,s,Toast.LENGTH_SHORT).show()
  override fun onResume() { super.onResume(); if(::map.isInitialized) map.onResume(); if(::waPage.isInitialized && waPage.visibility==View.VISIBLE) refreshWhatsApp() }
  override fun onPause() { if(::map.isInitialized) map.onPause(); super.onPause() }
- override fun onDestroy() { stopRide(); player?.release(); player=null; tts?.shutdown(); if(::map.isInitialized) map.onDetach(); super.onDestroy() }
+ override fun onDestroy() { try { unregisterReceiver(waReceiver) } catch(_:Exception){}; stopRide(); player?.release(); player=null; tts?.shutdown(); if(::map.isInitialized) map.onDetach(); super.onDestroy() }
 
  inner class BikeView(ctx:Context):View(ctx) {
   private val paint=Paint(3); private var angle=0f; private var playing=false; private var anim:ValueAnimator?=null
