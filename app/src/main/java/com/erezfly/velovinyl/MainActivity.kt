@@ -44,7 +44,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private lateinit var bike:BikeView; private lateinit var titleView:TextView; private lateinit var playButton:Button; private lateinit var trackList:LinearLayout
  private lateinit var pages:LinearLayout; private lateinit var statsText:TextView; private lateinit var mapPage:LinearLayout; private lateinit var homePage:LinearLayout; private lateinit var waPage:LinearLayout
  private lateinit var map:MapView; private var locationOverlay:MyLocationNewOverlay?=null; private var tts:TextToSpeech?=null
- private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var rideMeters=0.0; private var announcedKm=0; private var riding=false; private var destinationBox:EditText?=null
+ private var lastLocation:Location?=null; private var routePoints= mutableListOf<GeoPoint>(); private var routeLine:Polyline?=null; private var plannedPoints= mutableListOf<GeoPoint>(); private var plannedLine:Polyline?=null; private var offRouteWarned=false; private var rideMeters=0.0; private var announcedKm=0; private var riding=false; private var destinationBox:EditText?=null
  private var locationManager:LocationManager?=null; private var pendingDestination:String?=null; private var routeRequested=false; private val locationListener=LocationListener { loc -> onGps(loc) }
  private val pickCode=701; private val contactCode=702; private val audioPerm=703
  override fun onCreate(savedInstanceState:Bundle?) { super.onCreate(savedInstanceState); window.statusBarColor=bg; window.navigationBarColor=bg; Configuration.getInstance().userAgentValue=packageName; loadTracks(); tts=TextToSpeech(this,this); buildUi() }
@@ -78,7 +78,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private fun buildMapPage() {
   val c=LinearLayout(this).apply { orientation=1; setPadding(dp(12),dp(8),dp(12),dp(12)) }
   c.addView(label("מפת הרכיבה",20f,Color.WHITE,true))
-  map=MapView(this); map.setTileSource(TileSourceFactory.MAPNIK); map.setMultiTouchControls(true); map.controller.setZoom(14.0); map.controller.setCenter(GeoPoint(32.015,34.78))
+  map=MapView(this); map.setTileSource(TileSourceFactory.MAPNIK); map.setMultiTouchControls(true); map.controller.setZoom(14.0); map.controller.setCenter(GeoPoint(32.015,34.78)); locationOverlay=MyLocationNewOverlay(GpsMyLocationProvider(this),map); map.overlays.add(locationOverlay)
   c.addView(map,LinearLayout.LayoutParams(-1,dp(300)))
   val nav=card(); nav.addView(label("לאן רוכבים?",17f,Color.WHITE,true))
   destinationBox=EditText(this).apply { hint="הקלד כתובת או יעד"; setTextColor(Color.WHITE); setHintTextColor(muted); textSize=16f; setSingleLine(true); setPadding(dp(12),dp(8),dp(12),dp(8)); setBackgroundColor(Color.rgb(43,55,47)) }
@@ -136,24 +136,38 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
  private fun beginNavigation() {
   val dest=destinationBox?.text?.toString()?.trim().orEmpty(); if(dest.isBlank()) { toast("הקלד יעד"); return }
   if(ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) { ActivityCompat.requestPermissions(this,arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION),audioPerm); return }
+  riding=true; announcedKm=0; rideMeters=0.0; routePoints.clear(); plannedPoints.clear(); routeLine?.let { map.overlays.remove(it) }; plannedLine?.let { map.overlays.remove(it) }; routeLine=null; plannedLine=null; lastLocation=null; pendingDestination=dest; routeRequested=false; offRouteWarned=false
+  try { locationOverlay?.enableMyLocation() } catch(_:SecurityException){}
   val lm=getSystemService(LOCATION_SERVICE) as LocationManager; locationManager=lm
-  try { val last=lm.getLastKnownLocation(LocationManager.GPS_PROVIDER) ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER); if(last!=null) onGps(last) } catch(_:Exception){}
   try { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER,1500L,2f,locationListener) } catch(_:SecurityException){}
-  riding=true; announcedKm=0; rideMeters=0.0; lastLocation=null
+  try { lm.requestLocationUpdates(LocationManager.NETWORK_PROVIDER,3000L,5f,locationListener) } catch(_:Exception){}
   tts?.speak("הניווט והרכיבה התחילו. סע בזהירות.",TextToSpeech.QUEUE_FLUSH,null,"start")
-  thread { try { val address=URLEncoder.encode(dest,"UTF-8"); val geocoder=Geocoder(this,Locale("he","IL")); val results=geocoder.getFromLocationName(dest,1); runOnUiThread { if(results.isNullOrEmpty()) toast("לא מצאתי את היעד במפה") else { val p=GeoPoint(results[0].latitude,results[0].longitude); map.controller.animateTo(p); map.controller.setZoom(15.0) } } } catch(_:Exception){} }
+  thread { try { val geocoder=Geocoder(this,Locale("he","IL")); val results=geocoder.getFromLocationName(dest,1); runOnUiThread { if(results.isNullOrEmpty()) toast("לא מצאתי את היעד במפה") else { val end=GeoPoint(results[0].latitude,results[0].longitude); map.controller.animateTo(end); map.controller.setZoom(14.5); val here=lastLocation; if(here!=null) fetchBikeRoute(here,end) } } } catch(_:Exception){ runOnUiThread { toast("חיפוש היעד נכשל") } } }
   updateStats()
  }
+ private fun fetchBikeRoute(start:Location,end:GeoPoint) {
+  thread { try {
+   val q="https://brouter.de/brouter?lonlats=${start.longitude},${start.latitude}|${end.longitude},${end.latitude}&profile=trekking&alternativeidx=0&format=geojson"
+   val conn=(java.net.URL(q).openConnection() as java.net.HttpURLConnection).apply { connectTimeout=15000; readTimeout=25000 }
+   val raw=conn.inputStream.bufferedReader().use { it.readText() }; conn.disconnect()
+   val coords=JSONObject(raw).getJSONArray("features").getJSONObject(0).getJSONObject("geometry").getJSONArray("coordinates")
+   val pts=mutableListOf<GeoPoint>(); for(i in 0 until coords.length()) { val pair=coords.getJSONArray(i); pts.add(GeoPoint(pair.getDouble(1),pair.getDouble(0))) }
+   runOnUiThread { plannedPoints=pts; plannedLine=Polyline().apply { setPoints(pts); outlinePaint.color=green; outlinePaint.strokeWidth=dp(6).toFloat() }; map.overlays.add(plannedLine); map.invalidate(); tts?.speak("המסלול מוכן. אפשר לצאת לדרך.",TextToSpeech.QUEUE_ADD,null,"route") }
+  } catch(_:Exception) { runOnUiThread { toast("לא הצלחתי לחשב מסלול אופניים ליעד הזה") } } }
+ }
  private fun onGps(loc:Location) {
-  val p=GeoPoint(loc.latitude,loc.longitude); if(routePoints.isNotEmpty()) { val prev=lastLocation; if(prev!=null) { val d=prev.distanceTo(loc); if(d<150) rideMeters+=d }; routePoints.add(p); if(routePoints.size>1000) routePoints.removeAt(0); routeLine?.let { map.overlays.remove(it) }; routeLine=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(5).toFloat() }; map.overlays.add(routeLine) }
-  lastLocation=loc; if(riding && !routeRequested && pendingDestination!=null) { routeRequested=true; val dest=pendingDestination!!; thread { try { val geocoder=Geocoder(this,Locale("he","IL")); val found=geocoder.getFromLocationName(dest,1); if(!found.isNullOrEmpty()) fetchBikeRoute(loc,GeoPoint(found[0].latitude,found[0].longitude)) } catch(_:Exception){} } }; if(::map.isInitialized) { map.controller.animateTo(p); map.invalidate() }
-  if(riding) { val km=(rideMeters/1000).toInt(); if(km>announcedKm) { announcedKm=km; tts?.speak("עברתם $km קילומטרים",TextToSpeech.QUEUE_ADD,null,"km$km") }; updateStats() }
+  if(!riding) { lastLocation=loc; return }
+  val p=GeoPoint(loc.latitude,loc.longitude); val prev=lastLocation
+  if(prev!=null) { val d=prev.distanceTo(loc); if(d in 1.0..150.0) rideMeters+=d }
+  routePoints.add(p); if(routePoints.size>1200) routePoints.removeAt(0)
+  routeLine?.let { map.overlays.remove(it) }; routeLine=Polyline().apply { setPoints(routePoints); outlinePaint.color=gold; outlinePaint.strokeWidth=dp(4).toFloat() }; map.overlays.add(routeLine)
+  lastLocation=loc
+  if(!routeRequested && pendingDestination!=null) { routeRequested=true; val dest=pendingDestination!!; thread { try { val g=Geocoder(this,Locale("he","IL")).getFromLocationName(dest,1); if(!g.isNullOrEmpty()) fetchBikeRoute(loc,GeoPoint(g[0].latitude,g[0].longitude)) } catch(_:Exception){} } }
+  if(plannedPoints.isNotEmpty()) { var nearest=Double.MAX_VALUE; for(i in plannedPoints.indices step 5) { val pt=plannedPoints[i]; val out=FloatArray(1); Location.distanceBetween(loc.latitude,loc.longitude,pt.latitude,pt.longitude,out); nearest=min(nearest,out[0].toDouble()) }; if(nearest>85 && !offRouteWarned) { offRouteWarned=true; tts?.speak("שים לב, נראה שסטית מהמסלול.",TextToSpeech.QUEUE_ADD,null,"deviation") }; if(nearest<45) offRouteWarned=false }
+  if(::map.isInitialized) { if(mapPage.visibility==View.VISIBLE) map.controller.animateTo(p); map.invalidate() }
+  val km=(rideMeters/1000).toInt(); if(km>announcedKm) { announcedKm=km; tts?.speak("עברתם ${km} קילומטרים",TextToSpeech.QUEUE_ADD,null,"km$km") }; updateStats()
  }
- private fun updateStats() {
-  if(!::mapPage.isInitialized) return
-  val sv=mapPage.findViewWithTag<TextView>("stats") ?: return
-  sv.text="מרחק: %.2f ק״מ   •   GPS: %s".format(rideMeters/1000,if(lastLocation!=null) "מחובר" else "ממתין למיקום")
- }
+ private fun updateStats() { if(!::statsText.isInitialized) return; statsText.text="מרחק: %.2f ק״מ   •   GPS: %s".format(rideMeters/1000,if(lastLocation!=null) "מחובר" else "ממתין למיקום") }
  private fun stopRide() { riding=false; try { locationManager?.removeUpdates(locationListener) } catch(_:Exception){}; tts?.speak("הרכיבה הסתיימה",TextToSpeech.QUEUE_FLUSH,null,"stop") }
  override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) { super.onRequestPermissionsResult(requestCode,permissions,grantResults); if(requestCode==audioPerm && grantResults.any { it==PackageManager.PERMISSION_GRANTED }) beginNavigation() else if(requestCode==audioPerm) toast("צריך לאשר מיקום כדי להפעיל GPS") }
  private fun saveTracks() { val a=JSONArray(); tracks.forEach { a.put(JSONObject().put("name",it.name).put("uri",it.uri)) }; getSharedPreferences("library",MODE_PRIVATE).edit().putString("tracks",a.toString()).apply() }
